@@ -21,9 +21,11 @@ class NoiseAdder(Chain):
 			self.s = Const(init.Zero(), (1, ch, 1, 1))
 	
 	def __call__(self, x):
-		z = self.xp.random.normal(size=x.shape).astype(np.float32)
+		z = self.xp.random.normal(size=(x.shape[0], 1, x.shape[2], x.shape[3])).astype(np.float32)
+		z = F.broadcast_to(z, x.shape)
 		s = F.broadcast_to(self.s(), x.shape)
 		return x + s * z
+#		return x
 		
 class AdaIN(Chain):
 	def __init__(self, z_dim, ch_out):
@@ -134,7 +136,7 @@ class Generator(Chain):
 			self.b3 = GBlock(256, 128, z_dim, (32, 32))
 			self.b4 = GBlock(128, 64, z_dim, (64, 64))
 			self.b5 = GBlock(64, 32, z_dim, (128, 128))
-			self.b6 = GBlock(32, 16, z_dim, (256, 256))
+#			self.b6 = GBlock(32, 16, z_dim, (256, 256))
 
 		self.depth = depth
 
@@ -160,6 +162,19 @@ class Generator(Chain):
 			h = self.b0(w, True)
 					
 		return h
+
+	def style_mixing(self, ws):
+		# --- assertion ---
+		# alpha = 1.0
+		# len(ws) = depth + 1
+		# -----------------
+		
+		h = self.b0(ws[0])
+		for i in range(1, self.depth):
+			h = self['b%d' % i](h, ws[i])
+			
+		h = self['b%d' % self.depth](h, ws[self.depth], True)
+		return h
 		
 class StyleBasedGenerator(Chain):
 	def __init__(self, depth):
@@ -167,7 +182,7 @@ class StyleBasedGenerator(Chain):
 		super(StyleBasedGenerator, self).__init__()
 		with self.init_scope():
 			self.G = Generator(depth, z_dim)
-			self.E = StyleEncoder(z_dim, 8)
+			self.E = StyleEncoder(z_dim, 4)
 
 	def make_latent(self, size):
 		return self.E.make_latent(size)
@@ -226,28 +241,28 @@ class Discriminator(Chain):
 		w = init.Normal(1.0)
 		super(Discriminator, self).__init__()
 		with self.init_scope():
-			self.b1 = DBlock(16, 32)
-			self.b2 = DBlock(32, 64)
-			self.b3 = DBlock(64, 128)
-			self.b4 = DBlock(128, 256)
-			self.b5 = DBlock(256, 512)
-			self.b6 = DBlock(512, 512)
-			self.b7 = DLastBlock(512, 512)
+#			self.b1 = DBlock(16, 32)
+			self.b1 = DBlock(32, 64)
+			self.b2 = DBlock(64, 128)
+			self.b3 = DBlock(128, 256)
+			self.b4 = DBlock(256, 512)
+			self.b5 = DBlock(512, 512)
+			self.b6 = DLastBlock(512, 512)
 			self.l = L.Linear(512, 1, initialW=w)
 
 		self.depth = depth
 
 	def __call__(self, x, alpha=1.0):
 		if self.depth > 0 and alpha < 1:
-			h1 = self['b%d' % (7 - self.depth)](x, True)
+			h1 = self['b%d' % (6 - self.depth)](x, True)
 			x2 = F.average_pooling_2d(x, 2, 2)
-			h2 = F.leaky_relu(self['b%d' % (8 - self.depth)].fromRGB(x2))
+			h2 = F.leaky_relu(self['b%d' % (7 - self.depth)].fromRGB(x2))
 			h = h2 * (1 - alpha) + h1 * alpha
 		else:
-			h = self['b%d' % (7 - self.depth)](x, True)
+			h = self['b%d' % (6 - self.depth)](x, True)
 				
 		for i in range(self.depth):
-			h = self['b%d' % (8 - self.depth + i)](h)
+			h = self['b%d' % (7 - self.depth + i)](h)
 
 		h = self.l(h)
 		h = F.flatten(h)
